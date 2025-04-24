@@ -1,17 +1,23 @@
 import React, { useState, useEffect } from 'react';
-import { getVotes } from '../DB/Indexdb';
-import { openDB } from 'idb';
-
-const DB_NAME = 'voting-app';
-const STORE_NAME = 'votes';
+import { db } from '../Firebase'; // Firebase config
+import { collection, getDocs, deleteDoc, doc } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth'; // For Firebase Authentication
 
 const VoteResults = () => {
   const [tallied, setTallied] = useState([]);
   const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
 
+  // Firebase authentication
+  const auth = getAuth();
+
+  // Fetch votes from Firestore
   const fetchVotes = async () => {
     try {
-      const allVotes = await getVotes();
+      const voteCollection = collection(db, 'votes');
+      const voteSnapshot = await getDocs(voteCollection);
+      const allVotes = voteSnapshot.docs.map(doc => doc.data());
+
       let results = {};
 
       allVotes.forEach((vote) => {
@@ -24,36 +30,52 @@ const VoteResults = () => {
       const sortedResults = Object.entries(results).sort((a, b) => b[1] - a[1]);
       setTallied(sortedResults);
       setError('');
+      setSuccessMessage('');
     } catch (err) {
       console.error(err);
       setError('❌ Failed to fetch or process votes.');
     }
   };
 
-  useEffect(() => {
-    fetchVotes();
-  }, []);
-
+  // Delete all votes from Firestore (only for admin users)
   const handleDeleteAllVotes = async () => {
     try {
-      const db = await openDB(DB_NAME, 1);
-      const tx = db.transaction(STORE_NAME, 'readwrite');
-      await tx.objectStore(STORE_NAME).clear();
-      await tx.done;
+      const user = auth.currentUser; // Check if the user is authenticated (you can use `firebase.auth()` for this)
 
-      setTallied([]);
-      setError('');
+      if (user && user.email === "admin@example.com") { // Or check if user has admin role (using custom claims)
+        const voteCollection = collection(db, 'votes');
+        const voteSnapshot = await getDocs(voteCollection);
+
+        const deletePromises = voteSnapshot.docs.map((voteDoc) =>
+          deleteDoc(doc(db, 'votes', voteDoc.id))
+        );
+        
+        await Promise.all(deletePromises);
+
+        setTallied([]);
+        setSuccessMessage('✅ All votes have been successfully deleted.');
+        setError('');
+      } else {
+        setError('❌ Only an admin can delete all votes.');
+        setSuccessMessage('');
+      }
     } catch (err) {
       console.error(err);
       setError('❌ Failed to delete votes.');
+      setSuccessMessage('');
     }
   };
 
+  // Get the winners based on vote count
   const getWinners = () => {
     if (tallied.length === 0) return [];
     const highestCount = tallied[0][1];
     return tallied.filter(([_, count]) => count === highestCount);
   };
+
+  useEffect(() => {
+    fetchVotes();
+  }, []);
 
   return (
     <div
@@ -72,6 +94,7 @@ const VoteResults = () => {
       </h2>
 
       {error && <p style={{ color: 'red', textAlign: 'center' }}>{error}</p>}
+      {successMessage && <p style={{ color: 'green', textAlign: 'center' }}>{successMessage}</p>}
 
       {tallied.length > 0 ? (
         <>
